@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NIL V5 | Next-Gen Lua Virtualizer & Obfuscator</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --panel: #11141e;
+      --border: #1e2436;
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --accent-glow: rgba(139, 92, 246, 0.3);
+      --text: #e2e8f0;
+      --text-muted: #64748b;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: #fff;
+    }
+    .logo-badge {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--success);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+    }
+    main {
+      flex: 1;
+      padding: 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      flex: 1;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.75rem 1rem;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .panel-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .btn-sm {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.25rem 0.6rem;
+      font-size: 0.75rem;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-sm:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--accent);
+    }
+    textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #38bdf8;
+      font-family: "Fira Code", Monaco, Consolas, "Courier New", monospace;
+      font-size: 0.875rem;
+      padding: 1rem;
+      resize: none;
+      outline: none;
+      min-height: 400px;
+      line-height: 1.5;
+    }
+    #output {
+      color: #a78bfa;
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+    }
+    .btn-obfuscate {
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      color: #fff;
+      border: none;
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn-obfuscate:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px var(--accent-glow);
+    }
+    .btn-obfuscate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .stats {
+      display: flex;
+      gap: 2rem;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .stat-val {
+      color: #fff;
+      font-weight: 600;
+    }
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span>NIL OBFUSCATOR</span>
+      <span class="logo-badge">V5.1 PRO</span>
+    </div>
+    <div class="status">
+      <div class="status-dot"></div>
+      <span>Engine Online</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div class="stats">
+        <div>Architecture: <span class="stat-val">195 Prototypes / Unified VM</span></div>
+        <div>Offset System: <span class="stat-val">Non-Linear Bitwise Math</span></div>
+        <div>Anti-Tamper: <span class="stat-val">Invariant Hang & Trap</span></div>
+      </div>
+      <button class="btn-obfuscate" id="obfBtn" onclick="runObfuscation()">
+        <span>Obfuscate Script</span>
+      </button>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Input Lua / Luau Source</span>
+          <div class="panel-actions">
+            <button class="btn-sm" onclick="loadSample()">Load Sample</button>
+            <button class="btn-sm" onclick="clearInput()">Clear</button>
+          </div>
+        </div>
+        <textarea id="input" placeholder="-- Paste your Roblox / Lua script here..."></textarea>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Obfuscated Output</span>
+          <div class="panel-actions">
+            <button class="btn-sm" onclick="copyOutput()">Copy</button>
+            <button class="btn-sm" onclick="downloadOutput()">Download .lua</button>
+          </div>
+        </div>
+        <textarea id="output" readonly placeholder="-- Obfuscated code will appear here..."></textarea>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    NIL Virtualizer & Obfuscator Web Suite &bull; High Performance Dual-VM Architecture
+  </footer>
+
+  <script>
+    function loadSample() {
+      document.getElementById('input').value = `local Players = game:GetService("Players")\nprint("Hello, " .. Players.LocalPlayer.Name .. "!")\nfor i = 1, 5 do\n    print("Counting: " .. i)\nend`;
+    }
+
+    function clearInput() {
+      document.getElementById('input').value = '';
+    }
+
+    async function runObfuscation() {
+      const code = document.getElementById('input').value;
+      if (!code.trim()) {
+        alert('Please enter some Lua code first!');
+        return;
+      }
+
+      const btn = document.getElementById('obfBtn');
+      btn.disabled = true;
+      btn.innerText = 'Compiling...';
+
+      try {
+        const resp = await fetch('/api/obfuscate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code })
+        });
+
+        const data = await resp.json();
+        if (data.status === 'success') {
+          document.getElementById('output').value = data.obfuscated;
+        } else {
+          alert('Obfuscation failed: ' + (data.message || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('API Connection Error: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Obfuscate Script';
+      }
+    }
+
+    function copyOutput() {
+      const out = document.getElementById('output');
+      if (!out.value) return;
+      navigator.clipboard.writeText(out.value);
+      alert('Copied obfuscated script to clipboard!');
+    }
+
+    function downloadOutput() {
+      const out = document.getElementById('output').value;
+      if (!out) return;
+      const blob = new Blob([out], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'obfuscated.lua';
+      a.click();
+    }
+  </script>
+</body>
+</html>
