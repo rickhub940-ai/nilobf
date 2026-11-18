@@ -40,7 +40,7 @@
   p.entryKey=u32();if p.entryKey~=key then invalid()end
   p.constantCount=u32();totalConstants=totalConstants+p.constantCount;if totalConstants>65536 then invalid()end
   p.tags,p.constantData,p.constantSeals,p.cache={},{},{},{}
-  for i=1,p.constantCount do local tag=u8();if tag>4 then invalid()end;p.tags[i]=tag;if tag>=3 then p.constantSeals[i]=u32();p.constantData[i]=range()end end
+  for i=1,p.constantCount do local tag=u8();if tag>6 then invalid()end;p.tags[i]=tag;if tag>=3 then p.constantSeals[i]=u32();p.constantData[i]=range()end end
   p.instructionCount=u32();totalInstructions=totalInstructions+p.instructionCount;if p.instructionCount<1 or totalInstructions>100000 then invalid()end
   p.offsets={}
   for i=1,p.instructionCount do local n=u8();if n<37 or n>44 then invalid()end;need(n);p.offsets[(i-1)*5+1]=position;position=position+n end

@@ -1,3 +1,6 @@
 node_modules
 .vercel
 *.log
+
+# scratch (local toolchain + experiments, never commit)
+.scratch/
