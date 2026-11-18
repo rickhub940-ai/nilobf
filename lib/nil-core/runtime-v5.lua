@@ -33,23 +33,53 @@ return function(blob,environment,maxSteps,nativeRead,nativeWrite,entryOverride)
  local function ready(frame)
   if frame.phase~=1 or frame.history~=frame.openHistory or frame.bank~=frame.openBank then invalid()end
  end
+ local function sealedBytes(p,slot,key,tag)
+  local r=p.constantData[slot];local pieces,block={},{};local seal=mix(key,tag)
+  for j=1,r[2]do
+   local v=(p.reader8(r[1]+j-1)-floor(key/256^((j-1)%4))-(j%251)*17)%256
+   seal=mix(seal,v);block[#block+1]=string.char(v)
+   if #block==4096 then pieces[#pieces+1]=table.concat(block);block={}end
+  end
+  if seal~=p.constantSeals[slot]then invalid()end
+  pieces[#pieces+1]=table.concat(block);return table.concat(pieces)
+ end
+ local function assembleConst(program)
+  local stack,output={},{}
+  local i=1
+  local function pop() local v=stack[#stack];if v==nil then invalid()end;stack[#stack]=nil;return v end
+  while i<=#program do
+   local op=byte(program,i)
+   if op==1 then stack[#stack+1]=byte(program,i+1);i=i+2
+   elseif op==2 then local a,b=byte(program,i+1),byte(program,i+2);if not a or not b then invalid()end;stack[#stack+1]=a+b*256;i=i+3
+   elseif op==3 then local b,a=pop(),pop();stack[#stack+1]=(a+b)%256;i=i+1
+   elseif op==4 then local b,a=pop(),pop();stack[#stack+1]=(a-b+256)%256;i=i+1
+   elseif op==5 then local b,a=pop(),pop();stack[#stack+1]=(a*b)%256;i=i+1
+   elseif op==6 then stack[#stack+1]=(255-pop())%256;i=i+1
+   elseif op==7 then local v=stack[#stack];if v==nil then invalid()end;stack[#stack+1]=v;i=i+1
+   elseif op==8 then output[#output+1]=string.char(pop()%256);i=i+1
+   else invalid()end
+   if #stack>65536 or #output>65536 then invalid()end
+  end
+  if #stack~=0 then invalid()end
+  return table.concat(output)
+ end
  local function constant(frame,slot,key)
   if frame.phase~=1 or frame.history~=frame.openHistory then invalid()end;local p=frame.prototype
   if slot<1 or slot>p.constantCount or key==0 then invalid()end
   local cached=p.cache[slot];if cached then if cached[1]~=key then invalid()end;return cached[2]end
   local tag,value=p.tags[slot],nil
-  if tag==0 then return nil elseif tag==1 then value=false elseif tag==2 then value=true
-  else
-   local r=p.constantData[slot];local pieces,block={},{};local seal=mix(key,tag)
-   for j=1,r[2]do
-    local v=(p.reader8(r[1]+j-1)-floor(key/256^((j-1)%4))-(j%251)*17)%256
-    seal=mix(seal,v);block[#block+1]=string.char(v)
-    if #block==4096 then pieces[#pieces+1]=table.concat(block);block={}end
-   end
-   if seal~=p.constantSeals[slot]then invalid()end
-   pieces[#pieces+1]=table.concat(block);value=table.concat(pieces)
-   if tag==3 then value=tonumber(value);if not value or value~=value or value==math.huge or value==-math.huge then invalid()end end
-  end
+  if tag==0 then value=nil elseif tag==1 then value=false elseif tag==2 then value=true
+  elseif tag==3 then value=tonumber(sealedBytes(p,slot,key,3));if not value or value~=value or value==math.huge or value==-math.huge then invalid()end
+  elseif tag==4 then value=sealedBytes(p,slot,key,4)
+  elseif tag==6 then
+   local assembled=sealedBytes(p,slot,key,6)
+   local realTag=byte(assembled,1)
+   if not realTag then invalid()end
+   local raw=assembleConst(string.sub(assembled,2))
+   if realTag==3 then value=tonumber(raw);if not value or value~=value or value==math.huge or value==-math.huge then invalid()end
+   elseif realTag==4 then value=raw
+   else invalid()end
+  else invalid()end
   p.cache[slot]={key,value};return value
  end
  local function inverse(odd)local result=1;for i=1,3 do result=result*(2-odd*result)%256 end;return result end

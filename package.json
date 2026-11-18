@@ -1,8 +1,8 @@
 {
   "name": "nilobf",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
-  "description": "NIL V5.1 Master Lua Virtualizer & Obfuscator Web Platform",
+  "description": "NIL V5 Lua Virtualizer & Obfuscator — Nil VM Data V5 engine, fully original implementation",
   "main": "api/obfuscate.js",
   "scripts": {
     "test": "node test.mjs"
