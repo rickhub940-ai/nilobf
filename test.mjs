@@ -260,4 +260,77 @@ console.log('skibidi-ports');
   ok('combined hardening parses as valid Lua', !!luaparse.parse(combined, { luaVersion: '5.1' }));
 }
 
+console.log('009-hardened-probes');
+{
+  const luaparse = (await import('luaparse')).default;
+  const { buildHardenedProbes } = await import('./lib/nil-core/hardened-probes.mjs');
+  const { renameRunnerBindings } = await import('./lib/nil-core/presentation.mjs');
+  const { wrapLuaSourceAsNil } = await import('./lib/__nil.mjs');
+  const probe = buildHardenedProbes();
+  const probe2 = buildHardenedProbes();
+  ok('009 probe source parses in Lua 5.1 syntax', !!luaparse.parse(probe.source, { luaVersion: '5.1' }));
+  ok('009 probe salts change across builds', probe.source !== probe2.source && probe.probeCount === 7);
+  const opts = { vmVersion: 5, compactRecords: true, fastCipher: true, resultLinks: true, keyChain: true, aead: true, tamperSeal: true, hardenedProbes: true };
+  const wrapped = wrapLuaSourceAsNil('print("mesh")', opts);
+  ok('009 wrapper parses and hides internal binding names', !!luaparse.parse(wrapped, { luaVersion: '5.1' }) && !/\bhp_[a-z]/.test(wrapped));
+  ok('009 output has no decimal backslash escapes', !/\\[0-9]{3}/.test(wrapped));
+  assert.throws(() => wrapLuaSourceAsNil('print("x")', { ...opts, markerComment: '-- bad \\123' }), /Decimal backslash escape/);
+  ok('build rejects decimal backslash escapes, including in marker comments', true);
+  assert.throws(() => wrapLuaSourceAsNil('print("x")', { ...opts, tamperSeal: false }), /Hardened probes require/);
+  assert.throws(() => wrapLuaSourceAsNil('print("x")', { ...opts, hardenedProbes: 'yes' }), /Invalid hardened probes/);
+  ok('009 mode checks type and dependency', true);
+  const combined = wrapLuaSourceAsNil('print("x")', { ...opts, operatorSeal: true, phaseTokens: true, nameCipher: true, dispatchFamily: 'cascade' });
+  ok('009 combined hardening parses', !!luaparse.parse(combined, { luaVersion: '5.1' }) && !/\\[0-9]{3}/.test(combined));
+
+  const aliases = Array.from({length: 8}, () => renameRunnerBindings('local probeBinding=1; local function probeHelper(probeArg) return probeArg+probeBinding end; return probeHelper(2)'));
+  ok('generated local names change each build', new Set(aliases).size === aliases.length && aliases.every(s => !/probeBinding|probeHelper|probeArg/.test(s)));
+  const defaultOutput = obfuscateLua('print("x")', { skipGuard: true });
+  ok('public engine includes 009 mesh by default', defaultOutput.length > obfuscateLua('print("x")', { skipGuard: true, vm: { keyChain: false } }).length && !/\\[0-9]{3}/.test(defaultOutput));
+
+  // Optional integration matrix: point LUAU_BIN at a native Luau CLI.
+  if (process.env.LUAU_BIN) {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { spawnSync } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'nil-009-'));
+    let index = 0;
+    function run(code) {
+      const path = join(dir, `${index++}.luau`);
+      writeFileSync(path, code);
+      const r = spawnSync(process.env.LUAU_BIN, [path], { encoding: 'utf8', timeout: 30000 });
+      if (r.error) throw r.error;
+      return r;
+    }
+    try {
+      for (let i=0; i<8; i++) {
+        const source = obfuscateLua('print("boot-ok",5050)', { skipGuard: true });
+        const r = run(source);
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /boot-ok\s+5050/);
+      }
+      ok('native Luau boots eight randomized default builds', true);
+      const all = wrapLuaSourceAsNil('print("boot-ok",5050)', { ...opts, operatorSeal: true, phaseTokens: true, nameCipher: true, dispatchFamily: 'cascade' });
+      const allRun = run(all);
+      ok('native Luau boots combined hardening', allRun.status === 0 && /boot-ok\s+5050/.test(allRun.stdout));
+      const clean = run(probe.source + '\nprint("residue",hp)');
+      const fallback = run('local buffer=nil local bit32=nil\n' + probe.source + '\nprint("residue",hp)');
+      ok('clean probe residue is zero with and without optional buffer/bit32', clean.status === 0 && /residue\s+0/.test(clean.stdout) && fallback.status === 0 && /residue\s+0/.test(fallback.stdout));
+      const edges = [ ['scg','hp_scg_valid'], ['zero','hp_zero_guard and hp_neg_zero_guard'], ['fenv','hp_fenv_valid'], ['inner','hp_inner_valid'], ['buffer','hp_buf_ok'], ['math','hp_math_ok'], ['atom','hp_atom_ok'] ];
+      for (const [edge, condition] of edges) {
+        const old = `hp_mesh_edge('${edge}',${condition},`;
+        assert.ok(probe.source.includes(old), edge);
+        const altered = probe.source.replace(old, `hp_mesh_edge('${edge}',false,`);
+        const r = run(altered + '\nprint("residue",hp)');
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /residue\s+[1-9]/, edge);
+      }
+      const errored = run(probe.source.replace('local hp_seed=', 'error("probe sabotage") local hp_seed=') + '\nprint("residue",hp)');
+      ok('every failed mesh edge and probe exception produces nonzero residue', errored.status === 0 && /residue\s+1/.test(errored.stdout));
+      const tampered = run('local original_buffer=buffer\nlocal buffer=setmetatable({readu8=function(...) return (original_buffer.readu8(...)+1)%256 end},{__index=original_buffer})\nlocal ok=pcall(function(...)\n' + defaultOutput + '\nend)\nprint("tamper-result",ok)');
+      ok('native Luau rejects a tampered buffer without running the payload', tampered.status === 0 && /tamper-result\s+false/.test(tampered.stdout) && !/(?:^|\n)x(?:\s|$)/.test(tampered.stdout));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+}
+
 console.log(`\n${passed} checks passed`);

@@ -33,7 +33,8 @@ Lua source ──► compiler (luaparse) ──► Nil VM bytecode ──► low
 - **Name cipher** (`nameCipher: true`): primitives ของ host ที่ถูก cache ลง numeric slots (`string.byte`, `table.insert`, `error`, …) ไม่ถูกเขียนเป็นชื่อเต็มใน output — แต่ถูกประกอบจาก byte-subtract table ต่อ slot ตอนสร้าง object (`_G[string.char(...)][string.char(...)]`) ด้วย key สุ่มต่อ build — output ไม่มีชื่อ stdlib ให้ regex ได้ (ยกเว้น `string.char` ที่ตัว decoder ใช้เอง) — output ใหญ่ขึ้น ~2 KB
 - **Operator seal** (`operatorSeal: true`, ต้องเปิด `tamperSeal` ด้วย): fold arithmetic ใน tamper seal ถูกส่งผ่าน overloaded table type (metatable `__add`/`__sub`/`__mul`/`__mod`) แทน raw numbers — semantics เหมือนเดิม 100% แต่การอ่านออกลักษณะ cipher จาก branch/arithmetic แบบ static ทำได้ยากขึ้นมาก — output ใหญ่ขึ้น ~1 KB
 - **Cascade dispatch** (`dispatchFamily: 'cascade'`): dispatch family ที่สาม (นอกจาก `tree`/`bucket`) — ผสม opcode register ด้วยค่า build-random (`k = (op*MUL + ADD) % 2^32`) แล้ว if/elseif chain ตามค่า probe ที่ไม่ซ้ำกัน + `invalid()` tail เดียว — branch structure ไม่เปิดเผย opcode→handler mapping — ช้ากว่า tree dispatch (linear scan) แลกกับ obfuscation — output ใหญ่ขึ้นเล็กน้อย
-- **Token/field/slot randomization**: ทุก build ได้ output ต่างกัน
+- **009 coupled probe mesh** (`hardenedProbes: true`, ต้องเปิด `tamperSeal` และ `keyChain`): ผูก env proxy หลายชั้น, wire/trace, operator chains, fenv, buffer round-trip (เมื่อมี buffer), math graph และ atom proxy เข้าด้วยกัน 7 edges พร้อม final gate; ถ้า probe ล้มเหลว ผล mesh จะทำให้ pad ของ boot VM เปลี่ยนและ container ไม่ผ่านการตรวจสอบ โดยไม่เปิดเผยรายละเอียด probe — ต้องมี `getfenv`/`setfenv` ที่ทำงานได้ตามปกติ
+- **Token/field/slot และชื่อตัวแปรที่ wrapper สร้างสุ่มทุกครั้ง**: รวมตัวแปรของชั้น 009 ด้วย โดยสุ่มแบบรักษา scope; ชื่อ global และ API ภายนอกที่โปรแกรมต้องใช้ไม่ถูกสุ่มเปลี่ยน
 
 ## ใช้เป็นไลบรารี
 
@@ -57,6 +58,7 @@ const out = wrapLuaSourceAsNil('print("hello")', {
   aead: true,       // optional: ChaCha20-Poly1305 chunk seal (~+4 KB)
   assembledConstants: true, // optional: constants as sealed mini-VM programs (~+10 B)
   tamperSeal: true, // optional: pad-poisoning environment probes (requires keyChain, ~+4 KB)
+  hardenedProbes: true, // optional: 009-style coupled mesh (requires tamperSeal)
   operatorSeal: true, // optional: tamper seal arithmetic via overloaded table type (requires tamperSeal, ~+1 KB)
   phaseTokens: true,  // optional: per-helper magic-token call contracts (~+1 KB)
   nameCipher: true,   // optional: byte-subtract names for cached host primitives (~+2 KB)
@@ -64,7 +66,7 @@ const out = wrapLuaSourceAsNil('print("hello")', {
 });
 ```
 
-ค่า default ของ `obfuscateLua`: `compactRecords`, `fastCipher`, `resultLinks`, `cfgResultLinks`, `sealedRecords`, `activatedConstants`, `consumerHandlers` + guard `if not game or not Instance then return end` (ปิดได้ด้วย `{ skipGuard: true }`)
+ค่า default ของ `obfuscateLua` (รวมเว็บ/API): `compactRecords`, `fastCipher`, `resultLinks`, `cfgResultLinks`, `sealedRecords`, `activatedConstants`, `consumerHandlers`, `keyChain`, `tamperSeal`, `hardenedProbes` + guard `if not game or not Instance then return end` (ปิด guard ได้ด้วย `{ skipGuard: true }`) สามารถปิด key chain และชั้นที่พึ่งพากันได้ด้วย `{ vm: { keyChain: false } }`; ตัวเลือก `wrapLuaSourceAsNil` ระดับต่ำยังต้องเปิดชั้นเหล่านี้เอง โค้ดป้องกันที่เพิ่มทำให้ output ใหญ่ขึ้นและมีค่าใช้จ่ายตอน boot
 
 หมายเหตุ: guard ทำให้ script ไม่ทำงานนอกสภาพแวดล้อมที่มี `game` และ `Instance` (เช่น Roblox) เหมาะสำหรับ Roblox scripts ไม่เหมาะกับ server/plain Lua
 
