@@ -28,6 +28,11 @@ Lua source ──► compiler (luaparse) ──► Nil VM bytecode ──► low
 - **Key chain** (`keyChain: true`): container key จริงไม่เคยถูกเก็บไว้ในไฟล์ — เก็บเป็น `(key + pad) % 256` โดย pad ถูกคำนวณตอน boot โดยโปรแกรม Nil VM ขนาดเล็ก (boot program) ที่ฝังมาแยกต่างหาก พร้อม anti-tamper ในตัว (ถ้าสภาพแวดล้อมถูก hook pad จะเพี้ยนทุกไบต์ checksum หลักจะไม่ผ่าน) — การถอด payload แบบ static ต้อง emulate boot VM ก่อน จึงเพิ่มงานให้ static analysis จริงๆ แต่ก็ทำให้ output ใหญ่ขึ้น ~66 KB (boot VM ต้องพก dispatcher ของตัวเอง)
 - **Assembled constants** (`assembledConstants: true`): constant ทุกตัวไม่ถูกเก็บเป็น bytes ดิบใน payload — แต่เก็บเป็น *โปรแกรมขนาดเล็กของ VM ประกอบ constant* (tag 6) ที่ runtime ถอด/ตรวจ/ประกอบตอนใช้งานจริง: แต่ละ byte ของ constant ถูกส่งผ่าน chain ของ `PUSH`/`ADD`/`SUB`/`MUL`/`NOT` แบบสุ่ม (รวมตัวประกอบที่เป็นเลขคี่เพื่อบังคับ inverse mod 256) ทำให้แม้แต่ bytes ที่ผ่าน mask แล้วก็ไม่ปรากฏตรงๆ — โปรแกรมถูก seal ด้วย key/seal เดิมของ sealed record จึงถูกแก้ไขไม่ได้ ถ้า tag/seal ไม่ผ่าน VM จะ fail-closed ทันที — รองรับ constant ชนิด string/number เท่านั้น ใช้คู่กับ `sealedRecords` ได้ (ตัวอย่าง output +9 B เมื่อปิด sealed, +~1.3 KB เมื่อเปิด)
 - **AEAD seal** (`aead: true`): แทน additive mask + Adler checksum ด้วย **ChaCha20-Poly1305 (RFC 8439)** แยกทีละ chunk 4096 ไบต์ — payload ถูก authenticate ก่อนใช้งานเสมอ แก้ไข/ตัดทอนไบต์ใดๆ ใน payload ทำให้ boot ล้มเหลวทันที (fail-closed) เอนจินเข้ารหัสเขียนใหม่จาก spec (ไม่ใช่โค้ดบุคคลที่สาม) และตรวจสอบตรงกับ OpenSSL/`cryptography` แล้ว — output ใหญ่ขึ้น ~4 KB
+- **Tamper seal** (`tamperSeal: true`): anti-tamper layer รอบใหม่ที่ฝัง __ใน boot scope ของ key chain__ (ต้องเปิด `keyChain` ด้วย) — probes สภาพแวดล้อม 10 ตัว (pcall lane, error-box integrity, metatable `__add`/`__eq`, `getfenv`/`setfenv` round-trip, raw table, math core, `2^64` float, และ known-answer ของ `buffer`/`bit32` แบบ optional) พับผลผ่าน odd-multiplier 32-bit folds พร้อม re-verification lanes 3 ชั้น — ถ้าสภาพแวดล้อมไม่สะอาดแม้แต่ probe เดียว pad จะถูกเลื่อนทุกไบต์ด้วย feedback generator → key เพี้ยน → AEAD/Adler ไม่ผ่าน → boot ล้มเหลวทันที — พัฒนาจากการวิเคราะห์ obfuscator จริง (ดู `docs/skibidi-analysis.md`) — ไม่มี diagnostics ใดๆ บนทุก path — output ใหญ่ขึ้น ~4 KB
+- **Phase tokens** (`phaseTokens: true`): helper ที่ lift ออกจาก object ทุกตัวต้องรับ build-time magic token เป็น argument แรก — token ถูกตรวจในตัว method ก่อนแตะสถานะ VM มิฉะนั้น crash แบบ nil-call เงียบๆ (รูปแบบเดียวกับ call-contract ของ obfuscator จริงที่วิเคราะห์ไว้ใน `docs/skibidi-analysis.md`) — caller ที่ถอด/เรียกใช้ method ตรงๆ โดยไม่มี token จะตายเงียบ — output ใหญ่ขึ้น ~1 KB
+- **Name cipher** (`nameCipher: true`): primitives ของ host ที่ถูก cache ลง numeric slots (`string.byte`, `table.insert`, `error`, …) ไม่ถูกเขียนเป็นชื่อเต็มใน output — แต่ถูกประกอบจาก byte-subtract table ต่อ slot ตอนสร้าง object (`_G[string.char(...)][string.char(...)]`) ด้วย key สุ่มต่อ build — output ไม่มีชื่อ stdlib ให้ regex ได้ (ยกเว้น `string.char` ที่ตัว decoder ใช้เอง) — output ใหญ่ขึ้น ~2 KB
+- **Operator seal** (`operatorSeal: true`, ต้องเปิด `tamperSeal` ด้วย): fold arithmetic ใน tamper seal ถูกส่งผ่าน overloaded table type (metatable `__add`/`__sub`/`__mul`/`__mod`) แทน raw numbers — semantics เหมือนเดิม 100% แต่การอ่านออกลักษณะ cipher จาก branch/arithmetic แบบ static ทำได้ยากขึ้นมาก — output ใหญ่ขึ้น ~1 KB
+- **Cascade dispatch** (`dispatchFamily: 'cascade'`): dispatch family ที่สาม (นอกจาก `tree`/`bucket`) — ผสม opcode register ด้วยค่า build-random (`k = (op*MUL + ADD) % 2^32`) แล้ว if/elseif chain ตามค่า probe ที่ไม่ซ้ำกัน + `invalid()` tail เดียว — branch structure ไม่เปิดเผย opcode→handler mapping — ช้ากว่า tree dispatch (linear scan) แลกกับ obfuscation — output ใหญ่ขึ้นเล็กน้อย
 - **Token/field/slot randomization**: ทุก build ได้ output ต่างกัน
 
 ## ใช้เป็นไลบรารี
@@ -51,6 +56,11 @@ const out = wrapLuaSourceAsNil('print("hello")', {
   keyChain: true,   // optional: boot-derived container key (~+66 KB)
   aead: true,       // optional: ChaCha20-Poly1305 chunk seal (~+4 KB)
   assembledConstants: true, // optional: constants as sealed mini-VM programs (~+10 B)
+  tamperSeal: true, // optional: pad-poisoning environment probes (requires keyChain, ~+4 KB)
+  operatorSeal: true, // optional: tamper seal arithmetic via overloaded table type (requires tamperSeal, ~+1 KB)
+  phaseTokens: true,  // optional: per-helper magic-token call contracts (~+1 KB)
+  nameCipher: true,   // optional: byte-subtract names for cached host primitives (~+2 KB)
+  // dispatchFamily: 'cascade', // optional: mixed-register equality cascade dispatch
 });
 ```
 
