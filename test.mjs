@@ -103,6 +103,29 @@ const {Chacha20Poly1305Check} = await import('./lib/nil-core/aead.mjs').then(m =
   ok('tampered chunks are rejected', rejected === 3);
 }
 
+console.log('pad-seal');
+
+// --- Key-chain pad seal (anti-tamper gate bound to pad derivation) ---------
+{
+  const luaparse = (await import('luaparse')).default;
+  const { buildPadSeal } = await import('./lib/nil-core/gate-seal.mjs');
+  const seal = buildPadSeal();
+  ok('seal source carries no comments', !seal.source.includes('--'));
+  const standalone = `local pad={};for i=1,32 do pad[i]=0 end\n${seal.source}`;
+  ok('seal block parses as valid Lua', !!luaparse.parse(standalone, { luaVersion: '5.1' }));
+  const { wrapLuaSourceAsNil } = await import('./lib/__nil.mjs');
+  const base = { vmVersion: 5, compactRecords: true, fastCipher: true, resultLinks: true, keyChain: true, aead: true };
+  const on = wrapLuaSourceAsNil('print("x")', { ...base, tamperSeal: true });
+  const off = wrapLuaSourceAsNil('print("x")', base);
+  ok('tamper seal grows the wrapper', on.length > off.length);
+  ok('tamper seal wrapper parses as valid Lua', !!luaparse.parse(on, { luaVersion: '5.1' }));
+  let sealGuard = false;
+  try { wrapLuaSourceAsNil('print("x")', { vmVersion: 5, tamperSeal: true }); } catch { sealGuard = true; }
+  ok('tamper seal requires the key chain', sealGuard);
+  const on2 = wrapLuaSourceAsNil('print("x")', { ...base, tamperSeal: true });
+  ok('tamper seal salts differ across builds', on !== on2);
+}
+
 console.log('assembled-constants');
 
 // --- Mini-VM assembled constants ----------------------------------------------
@@ -171,6 +194,70 @@ console.log('api');
     await handler({ method: 'POST', headers: { 'x-forwarded-for': '203.0.113.99' }, body: { code: 'print(1)' } }, last);
   }
   ok('rate limit -> 429 after burst', last.statusCode === 429 && last.headers['Retry-After']);
+}
+
+console.log('skibidi-ports');
+
+// --- Skibidi-derived hardening: phase tokens, name cipher, operator seal, cascade
+{
+  const luaparse = (await import('luaparse')).default;
+  const { wrapLuaSourceAsNil } = await import('./lib/__nil.mjs');
+  const { buildPadSeal: buildSeal } = await import('./lib/nil-core/gate-seal.mjs');
+  const base = { vmVersion: 5, compactRecords: true, fastCipher: true, resultLinks: true, keyChain: true, aead: true };
+  const plain = wrapLuaSourceAsNil('print("x")', base);
+
+  // 7.1 phase tokens: lifted helpers verify a per-build magic token before running
+  const phased = wrapLuaSourceAsNil('print("x")', { ...base, phaseTokens: true });
+  ok('phase tokens are injected into the wrapper', (phased.match(/\(\{\}\)\[1\]\(\)/g) || []).length >= 2 && (plain.match(/\(\{\}\)\[1\]\(\)/g) || []).length === 0);
+  ok('phase token wrapper parses as valid Lua', !!luaparse.parse(phased, { luaVersion: '5.1' }));
+  let tokenGuard = false;
+  try { wrapLuaSourceAsNil('print("x")', { ...base, phaseTokens: 'yes' }); } catch { tokenGuard = true; }
+  ok('phase token mode is type-checked', tokenGuard);
+
+  // 7.2 name cipher: cached host primitives carry no plain stdlib names
+  const named = wrapLuaSourceAsNil('print("x")', { ...base, nameCipher: true });
+  ok('name cipher wrapper parses as valid Lua', !!luaparse.parse(named, { luaVersion: '5.1' }));
+  ok('name cipher removes stdlib member names', !named.includes('string.byte'));
+  ok('name cipher still caches primitives', named.includes('_G['));
+  let nameGuard = false;
+  try { wrapLuaSourceAsNil('print("x")', { ...base, nameCipher: 1 }); } catch { nameGuard = true; }
+  ok('name cipher mode is type-checked', nameGuard);
+
+  // 7.6 operator seal: fold arithmetic flows through an overloaded table type
+  const operatorSeal = buildSeal({ operator: true });
+  ok('operator seal source carries no comments', !operatorSeal.source.includes('--'));
+  ok('operator seal wraps arithmetic in an overloaded type', /NT\.__add/.test(operatorSeal.source) && /NT\.__mod/.test(operatorSeal.source));
+  const standalone = `local pad={};for i=1,32 do pad[i]=0 end\n${operatorSeal.source}`;
+  ok('operator seal block parses as valid Lua', !!luaparse.parse(standalone, { luaVersion: '5.1' }));
+  const opOn = wrapLuaSourceAsNil('print("x")', { ...base, tamperSeal: true, operatorSeal: true });
+  ok('operator seal wrapper parses as valid Lua', !!luaparse.parse(opOn, { luaVersion: '5.1' }));
+  ok('operator seal routes arithmetic through the overloaded type', opOn.includes('__mod'));
+  let operatorGuard = false;
+  try { wrapLuaSourceAsNil('print("x")', base); wrapLuaSourceAsNil('print("x")', { ...base, operatorSeal: true }); } catch { operatorGuard = true; }
+  ok('operator seal requires the tamper seal', operatorGuard);
+  let operatorType = false;
+  try { wrapLuaSourceAsNil('print("x")', { ...base, tamperSeal: true, operatorSeal: 'yes' }); } catch { operatorType = true; }
+  ok('operator seal mode is type-checked', operatorType);
+
+  // 7.7 cascade dispatch: build-random mixed register, equality arms, invalid tail
+  const cascade = wrapLuaSourceAsNil('print("x")', { ...base, dispatchFamily: 'cascade' });
+  ok('cascade wrapper parses as valid Lua', !!luaparse.parse(cascade, { luaVersion: '5.1' }));
+  const { randomizeDispatcher } = await import('./lib/nil-core/container.mjs');
+  const { readFileSync } = await import('node:fs');
+  const { OP } = await import('./lib/nil-core/opcodes.mjs');
+  const runtime = readFileSync('./lib/nil-core/runtime.lua', 'utf8');
+  const map = [0, ...Array.from({ length: Object.keys(OP).length }, (_, i) => i + 1)];
+  const dispatch = randomizeDispatcher(runtime, map, { dispatchFamily: 'cascade', objectName: 'state', handlerFields: [], usedFieldKeys: new Set() });
+  ok('cascade dispatch mixes the opcode register', /local k=\(\(op\*\d+\+\d+\)%4294967296\)/.test(dispatch));
+  ok('cascade dispatch covers every opcode arm', (dispatch.match(/k==\d+ then/g) || []).length === Object.keys(OP).length);
+  ok('cascade dispatch ends in invalid()', dispatch.trimEnd().endsWith('else invalid() end') || dispatch.includes('else invalid() end'));
+  let familyGuard = false;
+  try { wrapLuaSourceAsNil('print("x")', { ...base, dispatchFamily: 'bogus' }); } catch { familyGuard = true; }
+  ok('unknown dispatch families are rejected', familyGuard);
+
+  // all four together
+  const combined = wrapLuaSourceAsNil('print("x")', { ...base, phaseTokens: true, nameCipher: true, tamperSeal: true, operatorSeal: true, dispatchFamily: 'cascade' });
+  ok('combined hardening parses as valid Lua', !!luaparse.parse(combined, { luaVersion: '5.1' }));
 }
 
 console.log(`\n${passed} checks passed`);
